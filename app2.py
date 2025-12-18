@@ -7,17 +7,15 @@ from datetime import timedelta
 # --- 1. Configurações e Funções Auxiliares ---
 st.set_page_config(page_title="Central de Incidentes Unificada", layout="wide", page_icon="🧩")
 
-# Dicionário para traduzir datas por extenso (comum no arquivo Grid)
 MESES_PT = {
     'jan': '01', 'fev': '02', 'mar': '03', 'abr': '04', 'mai': '05', 'jun': '06',
     'jul': '07', 'ago': '08', 'set': '09', 'out': '10', 'nov': '11', 'dez': '12'
 }
 
 def limpar_data_pt(data_str):
-    """Converte '17 de dez. de 2025 14:46:02' para datetime"""
+    """Converte datas como '17 de dez. de 2025 14:46:02' para datetime"""
     if not isinstance(data_str, str): return pd.NaT
     try:
-        # Remove 'de ' e pontos
         clean = data_str.replace('de ', '').replace('.', '').lower()
         parts = clean.split()
         if len(parts) >= 3:
@@ -32,7 +30,6 @@ def limpar_data_pt(data_str):
 def extrair_falha_regex(texto):
     """Extrai o tipo de falha de textos longos (Arquivo Grid)"""
     if not isinstance(texto, str): return "Não Identificado"
-    # Procura por 'Tipo da falha:' e pega o texto seguinte
     padrao = r"(?:Tipo d?e? falha|Tp\.? falha|Falha):\s*(.*?)(?:\n|$)"
     match = re.search(padrao, texto, re.IGNORECASE)
     if match:
@@ -68,7 +65,7 @@ def converter_df_para_excel(df):
 
 # --- 2. Interface Principal ---
 st.title("🧩 Unificador de Incidentes e SLA")
-st.markdown("Faça o upload dos dois padrões de arquivo para gerar um relatório unificado.")
+st.markdown("Faça o upload dos dois arquivos. O sistema filtrará automaticamente o time **TCLOUD-DEVOPS-PROTHEUS** no arquivo Export.")
 
 col_up1, col_up2 = st.columns(2)
 
@@ -84,33 +81,46 @@ if file_grid and file_export:
     st.divider()
     if st.button("Processar e Unificar Arquivos 🚀"):
         try:
-            # --- PROCESSAMENTO ARQUIVO GRID (Com Regex) ---
-            df_grid = pd.read_csv(file_grid)
+            # --- PROCESSAMENTO ARQUIVO GRID (TCloud) ---
+            try:
+                df_grid = pd.read_csv(file_grid)
+            except:
+                df_grid = pd.read_csv(file_grid, sep=';')
             
             # Normalização Grid
             df_grid['Tipo_Falha_Unificado'] = df_grid['Descrição'].apply(extrair_falha_regex)
             df_grid = processar_sla(df_grid, 'Data de criação') # Calcula data + 24h
             
-            # Seleciona e renomeia para o padrão final
+            # Seleciona e renomeia
             df_grid_final = df_grid[['Exibir ID', 'Tipo_Falha_Unificado', 'Data_Abertura_Formatada', 'Prazo_SLA']].copy()
             df_grid_final.columns = ['ID', 'Tipo_Falha', 'Data_Abertura', 'Prazo_SLA']
             df_grid_final['Origem'] = 'Grid (TCloud)'
 
-            # --- PROCESSAMENTO ARQUIVO EXPORT (Estruturado) ---
+            # --- PROCESSAMENTO ARQUIVO EXPORT (Sistema Externo) ---
             try:
                 df_export = pd.read_csv(file_export)
             except:
                 df_export = pd.read_csv(file_export, sep=';')
 
-            # Tenta identificar a coluna de Assunto/Tipo automaticamente
+            # >>> FILTRO DE TIME RESPONSÁVEL <<<
+            if 'Equipe Responsável' in df_export.columns:
+                filtro_time = 'TCLOUD-DEVOPS-PROTHEUS'
+                # Filtra apenas o time desejado
+                df_export = df_export[df_export['Equipe Responsável'] == filtro_time].copy()
+                st.toast(f"Filtro aplicado: {len(df_export)} registros encontrados para {filtro_time} no arquivo Export.")
+            else:
+                st.warning("Coluna 'Equipe Responsável' não encontrada no arquivo Export. O filtro não foi aplicado.")
+
+            # Identifica colunas
             col_tipo_export = 'Assunto' if 'Assunto' in df_export.columns else df_export.columns[0]
             col_id_export = 'Número' if 'Número' in df_export.columns else 'ID'
             col_data_export = 'Data Hora de Abertura'
-            col_prazo_export = 'Resolver até' # Coluna que já existe nesse arquivo
+            col_prazo_export = 'Resolver até' 
 
             # Normalização Export
-            # Aqui assumimos que a coluna 'Assunto' ou 'Tipo' JÁ É o tipo da falha. 
-            # Se precisar limpar (ex: remover "Incidente - "), pode adicionar um .apply(lambda x: x...)
+            # Limpa o texto antes do primeiro hífen (ex: "Incidente - Erro..." vira "Incidente")
+            # Ou se quiser o conteúdo DEPOIS do hífen, mude para .str[1] se fizer sentido.
+            # Aqui mantivemos a lógica de pegar a primeira parte ou o texto todo se não tiver hífen.
             df_export['Tipo_Falha_Unificado'] = df_export[col_tipo_export].astype(str).str.split('-').str[0].str.strip()
             
             df_export = processar_sla(df_export, col_data_export, col_prazo_export)
@@ -123,39 +133,42 @@ if file_grid and file_export:
             # --- UNIFICAÇÃO ---
             df_unificado = pd.concat([df_grid_final, df_export_final], ignore_index=True)
 
-            # Análise de SLA (Vencido ou No Prazo) - Comparando com Agora (simulação) ou Data Atual
+            # Cálculo de Status SLA
             agora = pd.Timestamp.now()
-            df_unificado['Status_SLA'] = df_unificado['Prazo_SLA'].apply(lambda x: '🚨 Vencido' if x < agora else '✅ No Prazo')
+            df_unificado['Status_SLA'] = df_unificado['Prazo_SLA'].apply(lambda x: '🚨 Vencido' if pd.notnull(x) and x < agora else '✅ No Prazo')
             
             # Ordenar por data
             df_unificado = df_unificado.sort_values(by='Data_Abertura', ascending=False)
 
             # --- EXIBIÇÃO ---
-            st.success(f"Sucesso! {len(df_unificado)} incidentes unificados.")
+            st.success(f"Unificação concluída! Total de incidentes filtrados e unidos: {len(df_unificado)}")
 
             # Métricas
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Incidentes", len(df_unificado))
-            m2.metric("Vencidos (SLA)", len(df_unificado[df_unificado['Status_SLA'] == '🚨 Vencido']))
-            m3.metric("Origem Grid / Export", f"{len(df_grid_final)} / {len(df_export_final)}")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Geral", len(df_unificado))
+            c2.metric("Vencidos", len(df_unificado[df_unificado['Status_SLA'] == '🚨 Vencido']))
+            c3.metric("Origem Grid", len(df_grid_final))
+            c4.metric("Origem Export (Filtrado)", len(df_export_final))
 
             st.subheader("Tabela Unificada")
-            st.dataframe(df_unificado)
+            st.dataframe(df_unificado, use_container_width=True)
 
-            # Gráfico Rápido
+            # Gráfico
             st.subheader("Top 5 Tipos de Falha")
-            top_falhas = df_unificado['Tipo_Falha'].value_counts().head(5)
-            st.bar_chart(top_falhas)
+            if not df_unificado.empty:
+                st.bar_chart(df_unificado['Tipo_Falha'].value_counts().head(5))
+            else:
+                st.info("Nenhum dado para exibir no gráfico.")
 
             # Download
             excel_data = converter_df_para_excel(df_unificado)
             st.download_button(
                 label="📥 Baixar Relatório Unificado (.xlsx)",
                 data=excel_data,
-                file_name="incidentes_unificados.xlsx",
+                file_name="incidentes_unificados_filtrados.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
         except Exception as e:
             st.error(f"Erro ao processar: {e}")
-            st.write("Dica: Verifique se os nomes das colunas nos arquivos correspondem ao esperado (Exibir ID, Data de criação, Assunto, Número).")
+            st.write("Verifique se as colunas 'Equipe Responsável', 'Data Hora de Abertura' e 'Exibir ID' existem nos arquivos.")
