@@ -5,7 +5,7 @@ import io
 from datetime import timedelta
 
 # --- 1. Configurações e Funções Auxiliares ---
-st.set_page_config(page_title="Central de Incidentes Unificada", layout="wide", page_icon="🧩")
+st.set_page_config(page_title="Central de Incidentes Unificada", layout="wide", page_icon="💻")
 
 MESES_PT = {
     'jan': '01', 'fev': '02', 'mar': '03', 'abr': '04', 'mai': '05', 'jun': '06',
@@ -28,7 +28,7 @@ def limpar_data_pt(data_str):
     return pd.NaT
 
 def extrair_falha_regex(texto):
-    """Extrai o tipo de falha de textos longos (Arquivo Grid)"""
+    """Extrai o tipo de falha de textos longos (Arquivo turing)"""
     if not isinstance(texto, str): return "Não Identificado"
     padrao = r"(?:Tipo d?e? falha|Tp\.? falha|Falha):\s*(.*?)(?:\n|$)"
     match = re.search(padrao, texto, re.IGNORECASE)
@@ -64,74 +64,74 @@ def converter_df_para_excel(df):
     return output.getvalue()
 
 # --- 2. Interface Principal ---
-st.title("🧩 Unificador de Incidentes e SLA")
-st.markdown("Faça o upload dos dois arquivos. O sistema filtrará automaticamente o time **TCLOUD-DEVOPS-PROTHEUS** no arquivo Export.")
+st.title("💻 Unificador de Incidentes e SLA")
+st.markdown("Faça o upload dos dois arquivos. O sistema filtrará automaticamente o time **TCLOUD-DEVOPS-PROTHEUS** no arquivo cherwell.")
 
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
-    st.subheader("📂 Arquivo 1: Grid (Descritivo)")
-    file_grid = st.file_uploader("Upload CSV Grid", type=['csv'], key="f1")
+    st.subheader("📂 Arquivo 1: Turing (Descritivo)")
+    file_turing = st.file_uploader("Upload CSV turing", type=['csv'], key="f1")
 
 with col_up2:
-    st.subheader("📂 Arquivo 2: Export (Estruturado)")
-    file_export = st.file_uploader("Upload CSV Export", type=['csv'], key="f2")
+    st.subheader("📂 Arquivo 2: Cherwell (Estruturado)")
+    file_cherwell = st.file_uploader("Upload CSV cherwell", type=['csv'], key="f2")
 
-if file_grid and file_export:
+if file_turing and file_cherwell:
     st.divider()
     if st.button("Processar e Unificar Arquivos 🚀"):
         try:
-            # --- PROCESSAMENTO ARQUIVO GRID (TCloud) ---
+            # --- PROCESSAMENTO ARQUIVO turing (TCloud) ---
             try:
-                df_grid = pd.read_csv(file_grid)
+                df_turing = pd.read_csv(file_turing)
             except:
-                df_grid = pd.read_csv(file_grid, sep=';')
+                df_turing = pd.read_csv(file_turing, sep=';')
             
-            # Normalização Grid
-            df_grid['Tipo_Falha_Unificado'] = df_grid['Descrição'].apply(extrair_falha_regex)
-            df_grid = processar_sla(df_grid, 'Data de criação') # Calcula data + 24h
+            # Normalização turing
+            df_turing['Tipo_Falha_Unificado'] = df_turing['Descrição'].apply(extrair_falha_regex)
+            df_turing = processar_sla(df_turing, 'Data de criação') # Calcula data + 24h
             
             # Seleciona e renomeia
-            df_grid_final = df_grid[['Exibir ID', 'Tipo_Falha_Unificado', 'Data_Abertura_Formatada', 'Prazo_SLA']].copy()
-            df_grid_final.columns = ['ID', 'Tipo_Falha', 'Data_Abertura', 'Prazo_SLA']
-            df_grid_final['Origem'] = 'Grid (TCloud)'
+            df_turing_final = df_turing[['Exibir ID', 'Tipo_Falha_Unificado', 'Data_Abertura_Formatada', 'Prazo_SLA']].copy()
+            df_turing_final.columns = ['ID', 'Tipo_Falha', 'Data_Abertura', 'Prazo_SLA']
+            df_turing_final['Origem'] = 'turing (TCloud)'
 
-            # --- PROCESSAMENTO ARQUIVO EXPORT (Sistema Externo) ---
+            # --- PROCESSAMENTO ARQUIVO cherwell (Sistema Externo) ---
             try:
-                df_export = pd.read_csv(file_export)
+                df_cherwell = pd.read_csv(file_cherwell)
             except:
-                df_export = pd.read_csv(file_export, sep=';')
+                df_cherwell = pd.read_csv(file_cherwell, sep=';')
 
             # >>> FILTRO DE TIME RESPONSÁVEL <<<
-            if 'Equipe Responsável' in df_export.columns:
+            if 'Equipe Responsável' in df_cherwell.columns:
                 filtro_time = 'TCLOUD-DEVOPS-PROTHEUS'
                 # Filtra apenas o time desejado
-                df_export = df_export[df_export['Equipe Responsável'] == filtro_time].copy()
-                st.toast(f"Filtro aplicado: {len(df_export)} registros encontrados para {filtro_time} no arquivo Export.")
+                df_cherwell = df_cherwell[df_cherwell['Equipe Responsável'] == filtro_time].copy()
+                st.toast(f"Filtro aplicado: {len(df_cherwell)} registros encontrados para {filtro_time} no arquivo cherwell.")
             else:
-                st.warning("Coluna 'Equipe Responsável' não encontrada no arquivo Export. O filtro não foi aplicado.")
+                st.warning("Coluna 'Equipe Responsável' não encontrada no arquivo cherwell. O filtro não foi aplicado.")
 
             # Identifica colunas
-            col_tipo_export = 'Assunto' if 'Assunto' in df_export.columns else df_export.columns[0]
-            col_id_export = 'Número' if 'Número' in df_export.columns else 'ID'
-            col_data_export = 'Data Hora de Abertura'
-            col_prazo_export = 'Resolver até' 
+            col_tipo_cherwell = 'Assunto' if 'Assunto' in df_cherwell.columns else df_cherwell.columns[0]
+            col_id_cherwell = 'Número' if 'Número' in df_cherwell.columns else 'ID'
+            col_data_cherwell = 'Data Hora de Abertura'
+            col_prazo_cherwell = 'Resolver até' 
 
-            # Normalização Export
+            # Normalização cherwell
             # Limpa o texto antes do primeiro hífen (ex: "Incidente - Erro..." vira "Incidente")
             # Ou se quiser o conteúdo DEPOIS do hífen, mude para .str[1] se fizer sentido.
             # Aqui mantivemos a lógica de pegar a primeira parte ou o texto todo se não tiver hífen.
-            df_export['Tipo_Falha_Unificado'] = df_export[col_tipo_export].astype(str).str.split('-').str[0].str.strip()
+            df_cherwell['Tipo_Falha_Unificado'] = df_cherwell[col_tipo_cherwell].astype(str).str.split('-').str[0].str.strip()
             
-            df_export = processar_sla(df_export, col_data_export, col_prazo_export)
+            df_cherwell = processar_sla(df_cherwell, col_data_cherwell, col_prazo_cherwell)
 
             # Seleciona e renomeia
-            df_export_final = df_export[[col_id_export, 'Tipo_Falha_Unificado', 'Data_Abertura_Formatada', 'Prazo_SLA']].copy()
-            df_export_final.columns = ['ID', 'Tipo_Falha', 'Data_Abertura', 'Prazo_SLA']
-            df_export_final['Origem'] = 'Export System'
+            df_cherwell_final = df_cherwell[[col_id_cherwell, 'Tipo_Falha_Unificado', 'Data_Abertura_Formatada', 'Prazo_SLA']].copy()
+            df_cherwell_final.columns = ['ID', 'Tipo_Falha', 'Data_Abertura', 'Prazo_SLA']
+            df_cherwell_final['Origem'] = 'cherwell System'
 
             # --- UNIFICAÇÃO ---
-            df_unificado = pd.concat([df_grid_final, df_export_final], ignore_index=True)
+            df_unificado = pd.concat([df_turing_final, df_cherwell_final], ignore_index=True)
 
             # Cálculo de Status SLA
             agora = pd.Timestamp.now()
@@ -147,8 +147,8 @@ if file_grid and file_export:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Total Geral", len(df_unificado))
             c2.metric("Vencidos", len(df_unificado[df_unificado['Status_SLA'] == '🚨 Vencido']))
-            c3.metric("Origem Grid", len(df_grid_final))
-            c4.metric("Origem Export (Filtrado)", len(df_export_final))
+            c3.metric("Origem Turing", len(df_turing_final))
+            c4.metric("Origem Cherwell (Filtrado)", len(df_cherwell_final))
 
             st.subheader("Tabela Unificada")
             st.dataframe(df_unificado, use_container_width=True)
